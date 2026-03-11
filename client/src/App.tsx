@@ -334,12 +334,18 @@ function App() {
               <div className="view-header">
                 <button className="link-btn" onClick={() => setView('dashboard')}>← Back</button>
                 <h2>{selectedProject.name}</h2>
-                <label className="primary-btn">Upload File<input type="file" style={{display:'none'}} onChange={handleUploadFile} /></label>
+                <label className="primary-btn">Upload File<input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={handleUploadFile} /></label>
               </div>
               <div className="file-grid">
                 {files.map(f => (
                   <div key={f.id} className="file-card">
-                    {f.type === 'image' ? <img src={f.url} alt={f.name} /> : <div className="file-placeholder">{f.type.toUpperCase()}</div>}
+                    {f.type === 'image' ? (
+                      <img src={f.url} alt={f.name} />
+                    ) : f.type === 'video' ? (
+                      <video src={f.url} controls style={{ width: '100%', height: '120px', backgroundColor: '#000' }} />
+                    ) : (
+                      <div className="file-placeholder">{f.type.toUpperCase()}</div>
+                    )}
                     <div className="file-info"><p>{f.name}</p><a href={f.url} download target="_blank">Download</a></div>
                   </div>
                 ))}
