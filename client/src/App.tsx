@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import './App.css';
 
-type View = 'auth' | 'dashboard' | 'membership' | 'account' | 'project-details' | 'community';
+type View = 'auth' | 'dashboard' | 'membership' | 'account' | 'project-details' | 'community' | 'forgot-password' | 'reset-password' | 'home';
 
 interface MembershipTier {
   name: string;
@@ -54,6 +54,7 @@ function App() {
   const [user, setUser] = useState<{ id: number; email: string; membership: string; storageUsed: number } | null>(null);
   const [tiers, setTiers] = useState<Record<string, MembershipTier> | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [recentProjects, setRecentProjects] = useState<Project[]>([]);
   const [sidebarVisible, setSidebarVisible] = useState(true);
   
   // Community & Chat States
@@ -68,9 +69,21 @@ function App() {
   // Form states
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [authSuccess, setAuthSuccess] = useState<string | null>(null);
+  const [resetToken, setResetToken] = useState<string | null>(null);
 
   useEffect(() => {
+    // Check if we are on a reset password URL
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get('token');
+    if (window.location.pathname === '/reset-password' && token) {
+      setResetToken(token);
+      setView('reset-password');
+    }
+
     const fetchInitialData = async () => {
       try {
         const res = await fetch('/api/config/memberships');
@@ -80,17 +93,18 @@ function App() {
     fetchInitialData();
 
     const savedUser = localStorage.getItem('user');
-    const token = localStorage.getItem('token');
-    if (savedUser && token) {
+    const savedToken = localStorage.getItem('token');
+    if (savedUser && savedToken && window.location.pathname !== '/reset-password') {
       setUser(JSON.parse(savedUser));
       setView('dashboard');
     }
   }, []);
 
   useEffect(() => {
-    if (user && view !== 'auth') {
+    if (user && view !== 'auth' && view !== 'forgot-password' && view !== 'reset-password') {
       fetchChannels();
       if (view === 'dashboard') fetchProjects();
+      if (view === 'home') fetchRecentProjects();
       if (view === 'community') fetchUsers('');
     }
   }, [user, view]);
@@ -113,6 +127,14 @@ function App() {
       headers: { 'Authorization': `Bearer ${token}` }
     });
     if (res.ok) setProjects(await res.json());
+  };
+
+  const fetchRecentProjects = async () => {
+    const token = localStorage.getItem('token');
+    const res = await fetch('/api/projects/recent', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) setRecentProjects(await res.json());
   };
 
   const fetchFiles = async (projectId: number) => {
@@ -232,6 +254,70 @@ function App() {
     }
   };
 
+  const handleDeleteProject = async (projectId: number) => {
+    if (!confirm('Are you sure you want to delete this project? All files will be lost.')) return;
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/projects/${projectId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok) {
+      if (selectedProject?.id === projectId) {
+        setSelectedProject(null);
+        setView('dashboard');
+      }
+      fetchProjects();
+      fetchRecentProjects();
+    }
+  };
+
+  const handleDeleteFile = async (fileId: number) => {
+    if (!confirm('Delete this file?')) return;
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/files/${fileId}`, {
+      method: 'DELETE',
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+    if (res.ok && selectedProject) fetchFiles(selectedProject.id);
+  };
+
+  const handleEditFile = async (file: FileData) => {
+    const newName = prompt('Enter new file name:', file.name);
+    if (!newName || newName === file.name) return;
+    const token = localStorage.getItem('token');
+    const res = await fetch(`/api/files/${file.id}`, {
+      method: 'PATCH',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}` 
+      },
+      body: JSON.stringify({ name: newName })
+    });
+    if (res.ok && selectedProject) fetchFiles(selectedProject.id);
+  };
+
+  const handleReorder = async (index: number, direction: 'up' | 'down') => {
+    if (!selectedProject || files.length < 2) return;
+    const newFiles = [...files];
+    const newIndex = direction === 'up' ? index - 1 : index + 1;
+    if (newIndex < 0 || newIndex >= files.length) return;
+
+    const [removed] = newFiles.splice(index, 1);
+    newFiles.splice(newIndex, 0, removed);
+    
+    setFiles(newFiles);
+
+    const token = localStorage.getItem('token');
+    await fetch(`/api/projects/${selectedProject.id}/files/reorder`, {
+      method: 'PATCH',
+      headers: { 
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}` 
+      },
+      body: JSON.stringify({ fileIds: newFiles.map(f => f.id) })
+    });
+  };
+
   const handleAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError(null);
@@ -250,6 +336,40 @@ function App() {
     } else setAuthError(data.message);
   };
 
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+    const res = await fetch('/api/auth/forgot-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    const data = await res.json();
+    if (res.ok) setAuthSuccess(data.message);
+    else setAuthError(data.message);
+  };
+
+  const handleResetPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setAuthError(null);
+    setAuthSuccess(null);
+    const res = await fetch('/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: resetToken, newPassword }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      setAuthSuccess(data.message);
+      setTimeout(() => {
+        window.history.pushState({}, '', '/');
+        setView('auth');
+        setIsLogin(true);
+      }, 3000);
+    } else setAuthError(data.message);
+  };
+
   const handleLogout = () => {
     localStorage.clear();
     setUser(null);
@@ -262,6 +382,7 @@ function App() {
         <div className="auth-card">
           <h2>{isLogin ? 'Welcome Back' : 'Create Account'}</h2>
           {authError && <p className="error-text">{authError}</p>}
+          {authSuccess && <p className="success-text">{authSuccess}</p>}
           <form onSubmit={handleAuth} className="auth-form">
             <div className="input-group">
               <label>Email</label>
@@ -269,13 +390,88 @@ function App() {
             </div>
             <div className="input-group">
               <label>Password</label>
-              <input type="password" value={password} onChange={e => setPassword(e.target.value)} required />
+              <div className="password-input-wrapper">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={password} 
+                  onChange={e => setPassword(e.target.value)} 
+                  required 
+                />
+                <button 
+                  type="button" 
+                  className="show-password-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
             </div>
             <button type="submit" className="primary-btn">{isLogin ? 'Sign In' : 'Sign Up'}</button>
           </form>
-          <button onClick={() => setIsLogin(!isLogin)} className="link-btn">
+
+          {isLogin && (
+            <button type="button" onClick={() => setView('forgot-password')} className="forgot-password-link">
+              Forgot Password?
+            </button>
+          )}
+
+          <button onClick={() => { setIsLogin(!isLogin); setAuthSuccess(null); setAuthError(null); }} className="link-btn">
             {isLogin ? "No account? Sign Up" : "Have account? Login"}
           </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'forgot-password') {
+    return (
+      <div className="auth-section">
+        <div className="auth-card">
+          <h2>Reset Password</h2>
+          <p className="auth-subtext">Enter your email and we'll send you a link to reset your password.</p>
+          {authError && <p className="error-text">{authError}</p>}
+          {authSuccess && <p className="success-text">{authSuccess}</p>}
+          <form onSubmit={handleForgotPassword} className="auth-form">
+            <div className="input-group">
+              <label>Email</label>
+              <input type="email" value={email} onChange={e => setEmail(e.target.value)} required />
+            </div>
+            <button type="submit" className="primary-btn">Send Reset Link</button>
+          </form>
+          <button onClick={() => setView('auth')} className="link-btn">Back to Login</button>
+        </div>
+      </div>
+    );
+  }
+
+  if (view === 'reset-password') {
+    return (
+      <div className="auth-section">
+        <div className="auth-card">
+          <h2>Set New Password</h2>
+          {authError && <p className="error-text">{authError}</p>}
+          {authSuccess && <p className="success-text">{authSuccess}</p>}
+          <form onSubmit={handleResetPassword} className="auth-form">
+            <div className="input-group">
+              <label>New Password</label>
+              <div className="password-input-wrapper">
+                <input 
+                  type={showPassword ? "text" : "password"} 
+                  value={newPassword} 
+                  onChange={e => setNewPassword(e.target.value)} 
+                  required 
+                />
+                <button 
+                  type="button" 
+                  className="show-password-btn"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+            <button type="submit" className="primary-btn">Reset Password</button>
+          </form>
         </div>
       </div>
     );
@@ -285,7 +481,7 @@ function App() {
     <div className="app-layout">
       <div className="app-main">
         <header className="navbar">
-          <h1 className="logo" onClick={() => setView('dashboard')}>Foto-Collab</h1>
+          <h1 className="logo" onClick={() => setView('home')}>Foto-Collab</h1>
           <nav className="nav-links">
             <button onClick={() => setView('dashboard')} className={view === 'dashboard' ? 'active-nav' : ''}>Projects</button>
             <button onClick={() => setView('community')} className={view === 'community' ? 'active-nav' : ''}>Community</button>
@@ -299,6 +495,36 @@ function App() {
         </header>
 
         <main className="content-area">
+          {view === 'home' && (
+            <div className="home-view">
+              <div className="view-header">
+                <h2>Recent Activity</h2>
+                <p>Your 5 most recently updated projects</p>
+              </div>
+              {recentProjects.length > 0 ? (
+                <div className="project-grid">
+                  {recentProjects.map(p => (
+                    <div key={p.id} className="project-card" onClick={() => { setSelectedProject(p); fetchFiles(p.id); setView('project-details'); }}>
+                      <div className="project-thumb">
+                        {p.name}
+                        <span className="recent-activity-badge">Recent</span>
+                      </div>
+                      <div className="project-info">
+                        <h4>{p.name}</h4>
+                        <p>{p.photos} Files</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  <p>No recent activity. Start by creating or updating a project!</p>
+                  <button className="primary-btn" onClick={() => setView('dashboard')}>Go to Projects</button>
+                </div>
+              )}
+            </div>
+          )}
+
           {view === 'dashboard' && (
             <div className="dashboard-view">
               <div className="view-header">
@@ -321,7 +547,10 @@ function App() {
               <div className="project-grid">
                 {projects.map(p => (
                   <div key={p.id} className="project-card" onClick={() => { setSelectedProject(p); fetchFiles(p.id); setView('project-details'); }}>
-                    <div className="project-thumb">{p.name}</div>
+                    <div className="project-thumb">
+                      {p.name}
+                      <button className="card-delete-btn" onClick={(e) => { e.stopPropagation(); handleDeleteProject(p.id); }}>×</button>
+                    </div>
                     <div className="project-info"><h4>{p.name}</h4><p>{p.photos} Files</p></div>
                   </div>
                 ))}
@@ -334,11 +563,15 @@ function App() {
               <div className="view-header">
                 <button className="link-btn" onClick={() => setView('dashboard')}>← Back</button>
                 <h2>{selectedProject.name}</h2>
-                <label className="primary-btn">Upload File<input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={handleUploadFile} /></label>
+                <label className="primary-btn">Upload File...<input type="file" accept="image/*,video/*" style={{display:'none'}} onChange={handleUploadFile} /></label>
               </div>
               <div className="file-grid">
-                {files.map(f => (
+                {files.map((f, index) => (
                   <div key={f.id} className="file-card">
+                    <div className="file-actions">
+                      <button className="file-action-btn" onClick={() => handleEditFile(f)}>✎</button>
+                      <button className="file-action-btn delete" onClick={() => handleDeleteFile(f.id)}>×</button>
+                    </div>
                     {f.type === 'image' ? (
                       <img src={f.url} alt={f.name} />
                     ) : f.type === 'video' ? (
@@ -346,7 +579,16 @@ function App() {
                     ) : (
                       <div className="file-placeholder">{f.type.toUpperCase()}</div>
                     )}
-                    <div className="file-info"><p>{f.name}</p><a href={f.url} download target="_blank">Download</a></div>
+                    <div className="file-info">
+                      <p>{f.name}</p>
+                      <div className="file-footer">
+                        <a href={f.url} download target="_blank">Download</a>
+                        <div className="reorder-controls">
+                          <button disabled={index === 0} onClick={() => handleReorder(index, 'up')}>↑</button>
+                          <button disabled={index === files.length - 1} onClick={() => handleReorder(index, 'down')}>↓</button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 ))}
               </div>

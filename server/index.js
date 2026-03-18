@@ -13,6 +13,53 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 const JWT_SECRET = process.env.JWT_SECRET || 'super-secret-key';
+const BASE_URL = process.env.BASE_URL || (process.env.NODE_ENV === 'production' ? `http://localhost:${PORT}` : 'http://localhost:5173');
+
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
+
+// Email Transporter
+const transporter = nodemailer.createTransport({
+  host: 'smtp.gmail.com',
+  port: 465,
+  secure: true, // Use SSL
+  auth: {
+    user: process.env.EMAIL_USER,
+    pass: process.env.EMAIL_PASS,
+  },
+});
+
+const sendWelcomeEmail = async (email) => {
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: 'Welcome to Foto-Collab - Registration Successful',
+    html: `<h3>Welcome to Foto-Collab!</h3>
+           <p>Your registration was successful. You can now log in and start collaborating on your photo projects.</p>
+           <p>Best regards,<br>The Foto-Collab Team</p>`
+  };
+  await transporter.sendMail(mailOptions);
+};
+
+const sendPasswordResetEmail = async (email, token) => {
+  const url = `${BASE_URL}/reset-password?token=${token}`;
+  
+  console.log('--- PASSWORD RESET LINK (Dev Console) ---');
+  console.log(`Email: ${email}`);
+  console.log(`URL: ${url}`);
+  console.log('-----------------------------------------');
+
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: email,
+    subject: 'Password Reset Request - Foto-Collab',
+    html: `<h3>Password Reset Request</h3>
+           <p>You requested a password reset. Please click the link below to set a new password:</p>
+           <a href="${url}">${url}</a>
+           <p>If you did not request this, please ignore this email.</p>`
+  };
+  await transporter.sendMail(mailOptions);
+};
 
 // Ensure uploads directory exists
 const uploadsDir = path.join(__dirname, 'uploads');
@@ -80,13 +127,17 @@ app.post('/api/auth/register', async (req, res) => {
   if (!email || !password) return res.status(400).json({ message: 'Email and password are required' });
 
   const hashedPassword = await bcrypt.hash(password, 10);
-  const sql = `INSERT INTO users (email, password, phone, storageUsed) VALUES (?, ?, ?, ?)`;
+  const sql = `INSERT INTO users (email, password, phone, storageUsed, isVerified) VALUES (?, ?, ?, ?, ?)`;
   
-  db.run(sql, [email, hashedPassword, phone, 0], function(err) {
+  db.run(sql, [email, hashedPassword, phone, 0, 1], function(err) {
     if (err) return res.status(400).json({ message: 'User already exists' });
     const userId = this.lastID;
     const token = jwt.sign({ id: userId, email }, JWT_SECRET, { expiresIn: '1h' });
-    res.status(201).json({ token, user: { id: userId, email, membership: 'Free', storageUsed: 0 } });
+    
+    // Send welcome email in background
+    sendWelcomeEmail(email).catch(err => console.error('Welcome email failed:', err));
+
+    res.status(201).json({ token, user: { id: userId, email, membership: 'Free', storageUsed: 0 }, message: 'Registration successful. You can now log in.' });
   });
 });
 
@@ -99,6 +150,50 @@ app.post('/api/auth/login', async (req, res) => {
 
     const token = jwt.sign({ id: user.id, email: user.email }, JWT_SECRET, { expiresIn: '1h' });
     res.json({ token, user: { id: user.id, email: user.email, membership: user.membership, storageUsed: user.storageUsed } });
+  });
+});
+
+app.get('/api/auth/me', authenticateToken, (req, res) => {
+  db.get('SELECT id, email, membership, storageUsed FROM users WHERE id = ?', [req.user.id], (err, user) => {
+    if (err || !user) return res.status(404).json({ message: 'User not found' });
+    res.json(user);
+  });
+});
+
+app.post('/api/auth/forgot-password', (req, res) => {
+  const { email } = req.body;
+  db.get('SELECT * FROM users WHERE email = ?', [email], (err, user) => {
+    if (err || !user) return res.status(404).json({ message: 'User not found' });
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiry = Date.now() + 3600000; // 1 hour
+
+    db.run('UPDATE users SET resetToken = ?, resetTokenExpiry = ? WHERE id = ?', [token, expiry, user.id], async (err) => {
+      if (err) return res.status(500).json({ message: 'Failed to generate reset token' });
+
+      try {
+        console.log(`Attempting to send reset email to: ${email} using ${process.env.EMAIL_USER}`);
+        await sendPasswordResetEmail(email, token);
+        console.log('Reset email sent successfully');
+        res.json({ message: 'Password reset link sent to your email.' });
+      } catch (emailErr) {
+        console.error('DETAILED EMAIL ERROR:', emailErr);
+        res.status(500).json({ message: `Failed to send reset email: ${emailErr.message}` });
+      }
+    });
+  });
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const { token, newPassword } = req.body;
+  db.get('SELECT * FROM users WHERE resetToken = ? AND resetTokenExpiry > ?', [token, Date.now()], async (err, user) => {
+    if (err || !user) return res.status(400).json({ message: 'Invalid or expired reset token' });
+
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    db.run('UPDATE users SET password = ?, resetToken = NULL, resetTokenExpiry = NULL WHERE id = ?', [hashedPassword, user.id], (err) => {
+      if (err) return res.status(500).json({ message: 'Failed to update password' });
+      res.json({ message: 'Password reset successful. You can now log in.' });
+    });
   });
 });
 
@@ -171,8 +266,15 @@ app.post('/api/channels/:id/messages', authenticateToken, (req, res) => {
 
 // --- Project & File Endpoints ---
 app.get('/api/projects', authenticateToken, (req, res) => {
-  db.all('SELECT * FROM projects WHERE userId = ?', [req.user.id], (err, rows) => {
+  db.all('SELECT * FROM projects WHERE userId = ? ORDER BY createdAt DESC', [req.user.id], (err, rows) => {
     if (err) return res.status(500).json({ message: 'Failed to fetch projects' });
+    res.json(rows);
+  });
+});
+
+app.get('/api/projects/recent', authenticateToken, (req, res) => {
+  db.all('SELECT * FROM projects WHERE userId = ? ORDER BY updatedAt DESC LIMIT 5', [req.user.id], (err, rows) => {
+    if (err) return res.status(500).json({ message: 'Failed to fetch recent projects' });
     res.json(rows);
   });
 });
@@ -186,7 +288,7 @@ app.post('/api/projects', authenticateToken, (req, res) => {
 });
 
 app.get('/api/projects/:projectId/files', authenticateToken, (req, res) => {
-  db.all('SELECT * FROM files WHERE projectId = ?', [req.params.projectId], (err, rows) => {
+  db.all('SELECT * FROM files WHERE projectId = ? ORDER BY orderIndex ASC', [req.params.projectId], (err, rows) => {
     if (err) return res.status(500).json({ message: 'Failed to fetch files' });
     res.json(rows);
   });
@@ -207,12 +309,73 @@ app.post('/api/projects/:projectId/files', authenticateToken, upload.single('fil
     const limit = membershipTiers[user.membership.toLowerCase()].storageLimitGB;
     if (user.storageUsed + sizeGB > limit) return res.status(403).json({ message: 'Storage limit exceeded' });
 
-    db.run('INSERT INTO files (projectId, url, name, type, size) VALUES (?, ?, ?, ?, ?)', [projectId, url, name || req.file.originalname, type, sizeGB], function(err) {
-      db.run('UPDATE users SET storageUsed = storageUsed + ? WHERE id = ?', [sizeGB, req.user.id]);
-      db.run('UPDATE projects SET photos = photos + 1 WHERE id = ?', [projectId]);
-      res.status(201).json({ id: this.lastID, url, name: name || req.file.originalname, type, size: sizeGB });
+    db.get('SELECT COUNT(*) as count FROM files WHERE projectId = ?', [projectId], (err, row) => {
+      const orderIndex = row ? row.count : 0;
+      db.run('INSERT INTO files (projectId, url, name, type, size, orderIndex) VALUES (?, ?, ?, ?, ?, ?)', [projectId, url, name || req.file.originalname, type, sizeGB, orderIndex], function(err) {
+        db.run('UPDATE users SET storageUsed = storageUsed + ? WHERE id = ?', [sizeGB, req.user.id]);
+        db.run('UPDATE projects SET photos = photos + 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?', [projectId]);
+        res.status(201).json({ id: this.lastID, url, name: name || req.file.originalname, type, size: sizeGB, orderIndex });
+      });
     });
   });
+});
+
+app.delete('/api/projects/:projectId', authenticateToken, (req, res) => {
+  const { projectId } = req.params;
+  
+  // First, get all files to subtract storage
+  db.all('SELECT size FROM files WHERE projectId = ?', [projectId], (err, files) => {
+    const totalSize = files.reduce((acc, f) => acc + f.size, 0);
+    
+    db.run('DELETE FROM files WHERE projectId = ?', [projectId], () => {
+      db.run('DELETE FROM projects WHERE id = ? AND userId = ?', [projectId, req.user.id], function(err) {
+        if (this.changes === 0) return res.status(404).json({ message: 'Project not found' });
+        
+        db.run('UPDATE users SET storageUsed = storageUsed - ? WHERE id = ?', [totalSize, req.user.id]);
+        res.json({ message: 'Project deleted successfully' });
+      });
+    });
+  });
+});
+
+app.delete('/api/files/:fileId', authenticateToken, (req, res) => {
+  const { fileId } = req.params;
+  
+  db.get('SELECT f.*, p.userId FROM files f JOIN projects p ON f.projectId = p.id WHERE f.id = ?', [fileId], (err, file) => {
+    if (!file || file.userId !== req.user.id) return res.status(404).json({ message: 'File not found' });
+    
+    db.run('DELETE FROM files WHERE id = ?', [fileId], function(err) {
+      db.run('UPDATE users SET storageUsed = storageUsed - ? WHERE id = ?', [file.size, req.user.id]);
+      db.run('UPDATE projects SET photos = photos - 1, updatedAt = CURRENT_TIMESTAMP WHERE id = ?', [file.projectId]);
+      res.json({ message: 'File deleted successfully' });
+    });
+  });
+});
+
+app.patch('/api/files/:fileId', authenticateToken, (req, res) => {
+  const { fileId } = req.params;
+  const { name } = req.body;
+  
+  db.get('SELECT f.*, p.userId FROM files f JOIN projects p ON f.projectId = p.id WHERE f.id = ?', [fileId], (err, file) => {
+    if (!file || file.userId !== req.user.id) return res.status(404).json({ message: 'File not found' });
+    
+    db.run('UPDATE files SET name = ? WHERE id = ?', [name, fileId], function(err) {
+      res.json({ message: 'File updated successfully' });
+    });
+  });
+});
+
+app.patch('/api/projects/:projectId/files/reorder', authenticateToken, (req, res) => {
+  const { projectId } = req.params;
+  const { fileIds } = req.body; // Array of IDs in new order
+  
+  const stmt = db.prepare('UPDATE files SET orderIndex = ? WHERE id = ? AND projectId = ?');
+  fileIds.forEach((id, index) => {
+    stmt.run(index, id, projectId);
+  });
+  stmt.finalize();
+  
+  res.json({ message: 'Order updated successfully' });
 });
 
 // --- Membership Endpoints ---

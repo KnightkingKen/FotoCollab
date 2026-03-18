@@ -157,7 +157,20 @@ body {
 /* Dashboard & Projects */
 .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1.5rem; }
 .project-card { background: white; border-radius: 1rem; overflow: hidden; box-shadow: 0 4px 10px rgba(0,0,0,0.05); cursor: pointer; }
-.project-thumb { height: 120px; background: #dfe6e9; display: flex; align-items: center; justify-content: center; }
+.project-thumb { height: 120px; background: #dfe6e9; display: flex; align-items: center; justify-content: center; position: relative; }
+
+.recent-activity-badge {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  background: #ff7675;
+  color: white;
+  font-size: 0.7rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 1rem;
+  font-weight: bold;
+  text-transform: uppercase;
+}
 .project-info { padding: 1rem; }
 
 /* Files */
@@ -174,8 +187,68 @@ body {
 .input-group { display: flex; flex-direction: column; gap: 0.3rem; }
 .input-group input { padding: 0.7rem; border: 1px solid #ddd; border-radius: 0.5rem; }
 
+.password-input-wrapper {
+  position: relative;
+  display: flex;
+}
+
+.password-input-wrapper input {
+  flex: 1;
+  padding-right: 2.5rem;
+}
+
+.show-password-btn {
+  position: absolute;
+  right: 0.5rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: bold;
+  color: var(--primary-color);
+  padding: 0 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.forgot-password-link {
+  background: none;
+  border: none;
+  color: var(--primary-color);
+  cursor: pointer;
+  font-size: 0.85rem;
+  margin: -0.5rem 0 1rem 0;
+  font-weight: 500;
+  text-decoration: underline;
+}
+
+.auth-subtext {
+  color: var(--text-sub);
+  margin-bottom: 1.5rem;
+  font-size: 0.9rem;
+}
+
+.error-text { color: #d63031; font-weight: bold; margin: 1rem 0; }
+.success-text { color: #00b894; font-weight: bold; margin: 1rem 0; background: #e8f8f5; padding: 10px; border-radius: 8px; border: 1px solid #00b894; }
+
 /* Buttons */
-.primary-btn { background: var(--primary-color); color: white; border: none; padding: 0.7rem 1.2rem; border-radius: 0.5rem; cursor: pointer; font-weight: 600; }
+.primary-btn { 
+  background: var(--primary-color); 
+  color: white; 
+  border: none; 
+  padding: 0.7rem 1.2rem; 
+  border-radius: 0.5rem; 
+  cursor: pointer; 
+  font-weight: 600; 
+  display: inline-block;
+  text-align: center;
+  transition: opacity 0.2s;
+}
+.primary-btn:hover { opacity: 0.9; }
+
 .secondary-btn { background: #eee; border: none; padding: 0.7rem 1.2rem; border-radius: 0.5rem; cursor: pointer; }
 .link-btn { background: none; border: none; color: var(--primary-color); cursor: pointer; font-weight: 600; }
 .logout-btn { background: #ff7675 !important; color: white !important; border-radius: 0.5rem; padding: 0.5rem 1rem !important; }
@@ -186,4 +259,95 @@ body {
 .membership-card.active { border-color: var(--primary-color); }
 .price { font-size: 2rem; font-weight: 800; color: var(--primary-color); margin: 1rem 0; }
 
-.error-text { color: #d63031; font-weight: bold; margin: 1rem 0; }
+.view-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 2rem;
+}
+
+/* New UI styles */
+.card-delete-btn {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  background: rgba(255, 118, 117, 0.9);
+  color: white;
+  border: none;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: bold;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.project-card:hover .card-delete-btn {
+  opacity: 1;
+}
+
+.file-card {
+  position: relative;
+}
+
+.file-actions {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: flex;
+  gap: 5px;
+  opacity: 0;
+  transition: opacity 0.2s;
+  z-index: 10;
+}
+
+.file-card:hover .file-actions {
+  opacity: 1;
+}
+
+.file-action-btn {
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  width: 24px;
+  height: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+}
+
+.file-action-btn.delete {
+  color: #ff7675;
+}
+
+.file-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 5px;
+}
+
+.reorder-controls {
+  display: flex;
+  gap: 2px;
+}
+
+.reorder-controls button {
+  padding: 0 4px;
+  background: #f1f2f6;
+  border: 1px solid #ddd;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.reorder-controls button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
